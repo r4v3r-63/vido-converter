@@ -56,4 +56,9 @@ def main():
 
 
 if __name__ == '__main__':
-    main()
+    try:
+        main()
+    except Exception:
+        detail = traceback.format_exc().encode('ascii', 'backslashreplace').decode()
+        print('::error::' + detail.replace('%', '%25').replace('\r', '%0D').replace('\n', '%0A'), flush=True)
+        raise
