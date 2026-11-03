@@ -51,7 +51,12 @@ def main():
                 print('::error::' + detail.replace('%', '%25').replace('\r', '%0D').replace('\n', '%0A'))
                 raise
             finally:
-                process.terminate()
+                if sys.platform == 'win32':
+                    # One-file PyInstaller starts a child process; stop the whole
+                    # tree so Windows releases inherited log handles before cleanup.
+                    subprocess.run(['taskkill', '/PID', str(process.pid), '/T', '/F'], capture_output=True)
+                else:
+                    process.terminate()
                 process.wait(timeout=20)
 
 
