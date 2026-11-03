@@ -39,3 +39,15 @@ class DesktopTest(unittest.TestCase):
             self.assertFalse(list(folder.glob('.kadr-*')))
             events = list(ui.events.queue)
             self.assertIn(('row', 0, 'Готово'), events)
+
+    def test_gpu_probe_uses_supported_frame_and_reports_driver_error(self):
+        from desktop import probe_encoder
+        from types import SimpleNamespace
+        calls = []
+        def runner(args, **kwargs):
+            calls.append(args)
+            return SimpleNamespace(returncode=1, stderr=b'Driver does not support required NVENC API version')
+        reason = probe_encoder(Path('probe.mp4'), 'nvidia', 0, runner=runner)
+        self.assertIn('NVENC API', reason)
+        self.assertIn('color=size=640x360:rate=30', calls[0])
+        self.assertIn('-frames:v', calls[0])

@@ -12,6 +12,17 @@ from tkinter import filedialog, messagebox, ttk
 from app import command, FFMPEG
 
 
+def probe_encoder(target, encoder, device, runner=subprocess.run):
+    """Use a normal frame size: hardware encoders can reject tiny images."""
+    args = command(Path("unused"), target, "original", "original", True, encoder, device)
+    index = args.index("-i")
+    args[index:index + 2] = ["-f", "lavfi", "-i", "color=size=640x360:rate=30", "-frames:v", "3"]
+    flags = {"creationflags": subprocess.CREATE_NO_WINDOW} if sys.platform == "win32" else {}
+    result = runner(args, capture_output=True, timeout=30, **flags)
+    return None if result.returncode == 0 else result.stderr.decode("utf-8", "replace").strip() or "FFmpeg вернул ошибку без описания"
+
+
+
 class Converter:
     def __init__(self, root):
         self.root = root
@@ -21,6 +32,7 @@ class Converter:
         self.running = False
         self.closing = False
         self.failed = 0
+        self.gpu_diagnostics = 'Проверка ещё выполняется.'
         root.title('Кадр — конвертер видео')
         root.geometry('1000x780')
         root.minsize(800, 700)
@@ -79,6 +91,8 @@ class Converter:
         self.gpu_combo = ttk.Combobox(hardware, textvariable=self.encoder, values=list(self.devices), state='readonly', width=55)
         self.gpu_combo.pack(side='left', fill='x', expand=True, padx=12)
         self.combos.append(self.gpu_combo)
+        self.gpu_diagnostics_button = ttk.Button(hardware, text='Диагностика GPU', command=self.show_gpu_diagnostics)
+        self.gpu_diagnostics_button.pack(side='right')
         self.gpu_status = tk.StringVar(value='Проверка доступных видеокарт…')
         ttk.Label(outer, textvariable=self.gpu_status).pack(anchor='w', pady=(4, 0))
         threading.Thread(target=self.detect_devices, daemon=True).start()
@@ -112,6 +126,7 @@ class Converter:
         available = {'Процессор (CPU)': ('cpu', 0)}
         flags = {'creationflags': subprocess.CREATE_NO_WINDOW} if sys.platform == 'win32' else {}
         candidates = []
+        diagnostics = []
         try:
             data = subprocess.run(['nvidia-smi', '--query-gpu=index,name', '--format=csv,noheader'], capture_output=True, text=True, timeout=10, **flags)
             for line in data.stdout.splitlines():
@@ -126,15 +141,28 @@ class Converter:
             for label, encoder, device in candidates:
                 try:
                     target = Path(tmp) / 'probe.mp4'
-                    args = command(Path('unused'), target, 'original', 'original', True, encoder, device)
-                    index = args.index('-i')
-                    args[index:index + 2] = ['-f', 'lavfi', '-i', 'color=size=64x64:rate=10', '-t', '0.1']
-                    result = subprocess.run(args, capture_output=True, timeout=15, **flags)
-                    if result.returncode == 0:
+                    error = probe_encoder(target, encoder, device)
+                    if error is None:
                         available[label] = (encoder, device)
-                except (OSError, subprocess.TimeoutExpired):
-                    continue
-        self.events.put(('devices', available))
+                        diagnostics.append(label + ': доступно')
+                    else:
+                        diagnostics.append(label + ':\n' + error)
+                except (OSError, subprocess.TimeoutExpired) as exc:
+                    diagnostics.append(label + ':\n' + str(exc))
+        self.events.put(('devices', available, '\n\n'.join(diagnostics)))
+
+    def show_gpu_diagnostics(self):
+        window = tk.Toplevel(self.root)
+        window.title('Диагностика видеокарт')
+        window.geometry('850x500')
+        text = tk.Text(window, wrap='word', font=('Consolas', 10))
+        text.pack(fill='both', expand=True, padx=12, pady=12)
+        text.insert('1.0', self.gpu_diagnostics)
+        text.configure(state='disabled')
+        def copy():
+            window.clipboard_clear()
+            window.clipboard_append(self.gpu_diagnostics)
+        ttk.Button(window, text='Скопировать диагностику', command=copy).pack(pady=8)
 
     def choose_files(self):
         names = filedialog.askopenfilenames(title='Выберите видео', filetypes=[('Видеофайлы', '*.mp4 *.mkv *.avi *.mov *.webm *.mts *.m2ts *.flv *.wmv *.ts *.mpeg *.mpg *.m4v'), ('Все файлы', '*.*')])
@@ -271,8 +299,9 @@ class Converter:
                 event = self.events.get_nowait()
                 if event[0] == 'devices':
                     self.devices = event[1]
+                    self.gpu_diagnostics = event[2]
                     self.gpu_combo.configure(values=list(self.devices))
-                    self.gpu_status.set('Выберите видеокарту для MP4/MKV. Масштабирование и чтение остаются на CPU.' if len(self.devices) > 1 else 'Аппаратные кодировщики недоступны: используется CPU. Проверьте драйверы видеокарты.')
+                    self.gpu_status.set('Выберите видеокарту для MP4/MKV. Масштабирование и чтение остаются на CPU.' if len(self.devices) > 1 else 'GPU не прошли проверку. Причины — в кнопке «Диагностика GPU».')
                 elif event[0] == 'row':
                     _, index, status = event
                     self.tree.set(str(index), 'status', status)
