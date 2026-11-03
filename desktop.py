@@ -45,10 +45,12 @@ class Converter:
         style.configure('Treeview', rowheight=29, font=('Segoe UI', 10))
         outer = ttk.Frame(root, padding=24)
         outer.pack(fill='both', expand=True)
-        ttk.Label(outer, text='Кадр', font=('Segoe UI', 25, 'bold')).pack(anchor='w')
-        ttk.Label(outer, text='Пакетная конвертация видео • исходники остаются без изменений').pack(anchor='w', pady=(2, 18))
+        outer.columnconfigure(0, weight=1)
+        outer.rowconfigure(3, weight=1)
+        ttk.Label(outer, text='Кадр', font=('Segoe UI', 25, 'bold')).grid(row=0, column=0, sticky='w')
+        ttk.Label(outer, text='Пакетная конвертация видео • исходники остаются без изменений').grid(row=1, column=0, sticky='w', pady=(2, 18))
         toolbar = ttk.Frame(outer)
-        toolbar.pack(fill='x')
+        toolbar.grid(row=2, column=0, sticky='ew')
         self.add = ttk.Button(toolbar, text='＋ Добавить видео', command=self.choose_files)
         self.add.pack(side='left')
         self.remove = ttk.Button(toolbar, text='Удалить выбранные', command=self.remove_files)
@@ -56,7 +58,7 @@ class Converter:
         self.clear = ttk.Button(toolbar, text='Очистить', command=self.clear_files)
         self.clear.pack(side='left')
         table = ttk.Frame(outer)
-        table.pack(fill='both', expand=True, pady=14)
+        table.grid(row=3, column=0, sticky='nsew', pady=14)
         self.tree = ttk.Treeview(table, columns=('file', 'status'), show='headings')
         self.tree.heading('file', text='Файл')
         self.tree.heading('status', text='Состояние')
@@ -68,7 +70,7 @@ class Converter:
         scroll.pack(side='right', fill='y')
         self.tree.bind('<Double-1>', self.show_detail)
         settings = ttk.Frame(outer)
-        settings.pack(fill='x')
+        settings.grid(row=4, column=0, sticky='ew')
         self.size = tk.StringVar(value='1920 × 1080 · Full HD')
         self.fps = tk.StringVar(value='Как в оригинале')
         self.fmt = tk.StringVar(value='MP4')
@@ -84,7 +86,7 @@ class Converter:
             combo.grid(row=1, column=i, sticky='ew', padx=(0, 12), pady=(6, 0))
             self.combos.append(combo)
         hardware = ttk.Frame(outer)
-        hardware.pack(fill='x', pady=(14, 0))
+        hardware.grid(row=5, column=0, sticky='ew', pady=(14, 0))
         ttk.Label(hardware, text='Кодирование:').pack(side='left')
         self.devices = {'Процессор (CPU)': ('cpu', 0)}
         self.encoder = tk.StringVar(value='Процессор (CPU)')
@@ -94,31 +96,32 @@ class Converter:
         self.gpu_diagnostics_button = ttk.Button(hardware, text='Диагностика GPU', command=self.show_gpu_diagnostics)
         self.gpu_diagnostics_button.pack(side='right')
         self.gpu_status = tk.StringVar(value='Проверка доступных видеокарт…')
-        ttk.Label(outer, textvariable=self.gpu_status).pack(anchor='w', pady=(4, 0))
+        ttk.Label(outer, textvariable=self.gpu_status).grid(row=6, column=0, sticky='w', pady=(4, 0))
         threading.Thread(target=self.detect_devices, daemon=True).start()
         self.mute = tk.BooleanVar()
         self.sound = ttk.Checkbutton(outer, text='Удалить звук из готовых видео', variable=self.mute)
-        self.sound.pack(anchor='w', pady=14)
+        self.sound.grid(row=7, column=0, sticky='w', pady=14)
         folder = ttk.Frame(outer)
-        folder.pack(fill='x')
+        folder.grid(row=8, column=0, sticky='ew')
         self.destination = tk.StringVar(value=str(Path.home() / 'Videos' / 'Kadr'))
         ttk.Label(folder, text='Сохранить в:').pack(side='left')
         self.folder_entry = ttk.Entry(folder, textvariable=self.destination)
         self.folder_entry.pack(side='left', fill='x', expand=True, padx=10)
         self.browse = ttk.Button(folder, text='Выбрать папку', command=self.choose_folder)
         self.browse.pack(side='left')
-        ttk.Label(outer, text='Пропорции сохраняются. Ограничений на размер и количество файлов нет.').pack(anchor='w', pady=(12, 8))
+        ttk.Label(outer, text='Пропорции сохраняются. Ограничений на размер и количество файлов нет.').grid(row=9, column=0, sticky='w', pady=(12, 8))
         self.progress = ttk.Progressbar(outer, mode='determinate')
-        self.progress.pack(fill='x')
+        self.progress.grid(row=10, column=0, sticky='ew')
         self.status = tk.StringVar(value='Добавьте видео и выберите папку для результатов.')
-        ttk.Label(outer, textvariable=self.status).pack(anchor='w', pady=8)
+        ttk.Label(outer, textvariable=self.status, wraplength=850, justify='left').grid(row=11, column=0, sticky='w', pady=8)
         bottom = ttk.Frame(outer)
-        bottom.pack(fill='x')
+        bottom.grid(row=12, column=0, sticky='ew')
         self.start_button = ttk.Button(bottom, text='Конвертировать видео', command=self.start)
         self.start_button.pack(side='left')
         self.stop_button = ttk.Button(bottom, text='Остановить', command=self.cancel.set, state='disabled')
         self.stop_button.pack(side='left', padx=10)
-        ttk.Button(bottom, text='Открыть папку результатов', command=self.open_folder).pack(side='right')
+        self.open_button = ttk.Button(bottom, text='Открыть папку результатов', command=self.open_folder)
+        self.open_button.pack(side='right')
         root.protocol('WM_DELETE_WINDOW', self.close)
         root.after(100, self.poll)
 
@@ -342,6 +345,15 @@ def smoke(root, ui, report):
     source = folder / 'sample.mp4'
     try:
         subprocess.run([FFMPEG, '-v', 'error', '-f', 'lavfi', '-i', 'color=size=64x64:rate=10', '-t', '0.2', '-c:v', 'libx264', str(source)], check=True, creationflags=subprocess.CREATE_NO_WINDOW if sys.platform == 'win32' else 0)
+        # Validate layout at enlarged Windows text scale, including the smallest window.
+        for geometry in ['1000x780', '900x700']:
+            root.geometry(geometry)
+            root.update()
+            for button in (ui.start_button, ui.stop_button, ui.open_button):
+                assert button.winfo_ismapped(), 'Action button is hidden'
+                assert button.winfo_height() >= button.winfo_reqheight(), 'Action button height clipped'
+                assert button.winfo_rooty() + button.winfo_height() <= root.winfo_rooty() + root.winfo_height(), 'Action button outside window'
+                assert button.winfo_width() >= button.winfo_reqwidth(), 'Action button width clipped'
         ui.add_files([source])
         ui.destination.set(str(folder))
         ui.size.set('Как в оригинале')
@@ -364,6 +376,8 @@ def smoke(root, ui, report):
 
 if __name__ == '__main__':
     root = tk.Tk()
+    if '--smoke-test' in sys.argv:
+        root.tk.call('tk', 'scaling', 2.0)
     ui = Converter(root)
     scratch = None
     if len(sys.argv) == 3 and sys.argv[1] == '--smoke-test':
