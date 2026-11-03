@@ -7,6 +7,7 @@ import tempfile
 import time
 import urllib.request
 import zipfile
+import traceback
 from pathlib import Path
 
 
@@ -45,6 +46,10 @@ def main():
                 with zipfile.ZipFile(io.BytesIO(data)) as archive:
                     assert archive.namelist() == ['001_sample.mp4']
                 print('Packaged executable: upload, bundled FFmpeg conversion and ZIP download passed')
+            except Exception:
+                detail = traceback.format_exc() + '\nServer output:\n' + log.read_text(errors='replace')
+                print('::error::' + detail.replace('%', '%25').replace('\r', '%0D').replace('\n', '%0A'))
+                raise
             finally:
                 process.terminate()
                 process.wait(timeout=20)
