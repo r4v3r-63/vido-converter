@@ -25,6 +25,66 @@ SIZES = {"original": None, "2160": (3840, 2160), "1080": (1920, 1080), "720": (1
 FORMATS = {"mp4": ["-c:v", "libx264", "-preset", "fast", "-crf", "23", "-c:a", "aac", "-movflags", "+faststart"], "mkv": ["-c:v", "libx264", "-preset", "fast", "-crf", "23", "-c:a", "aac"], "webm": ["-c:v", "libvpx-vp9", "-crf", "32", "-b:v", "0", "-c:a", "libopus"]}
 
 
+def read_upload(stream, length, content_type, directory):
+    """Parse multipart bodies with bounded buffers; video bytes go straight to disk."""
+    header = BytesParser(policy=email.policy.default).parsebytes(
+        ('Content-Type: ' + content_type + '\r\n\r\n').encode())
+    boundary = header.get_boundary()
+    if not boundary or len(boundary) > 200:
+        raise ValueError("Неверная граница загрузки")
+    marker = b'--' + boundary.encode('ascii')
+    buffer = b''
+    remaining = length
+
+    def take(delimiter, sink=None, limit=65536):
+        nonlocal buffer, remaining
+        collected = bytearray()
+        def emit(data):
+            if sink is not None:
+                sink.write(data)
+            else:
+                collected.extend(data)
+                if len(collected) > limit:
+                    raise ValueError("Слишком длинное служебное поле загрузки")
+        while True:
+            offset = buffer.find(delimiter)
+            if offset >= 0:
+                emit(buffer[:offset])
+                buffer = buffer[offset + len(delimiter):]
+                return bytes(collected)
+            safe = max(0, len(buffer) - len(delimiter) + 1)
+            emit(buffer[:safe])
+            buffer = buffer[safe:]
+            if not remaining:
+                raise ValueError("Загрузка оборвалась до завершения")
+            chunk = stream.read(min(1024 * 1024, remaining))
+            if not chunk:
+                raise ValueError("Загрузка оборвалась до завершения")
+            remaining -= len(chunk)
+            buffer += chunk
+
+    if take(b'\r\n') != marker:
+        raise ValueError("Неверное начало загрузки")
+    fields, inputs = {}, []
+    while True:
+        headers = BytesParser(policy=email.policy.default).parsebytes(take(b'\r\n\r\n') + b'\r\n\r\n')
+        name = headers.get_param('name', header='content-disposition')
+        filename = headers.get_filename()
+        if filename:
+            filename = Path(filename.replace('\\', '/')).name
+            source = directory / f'input_{len(inputs)}'
+            with source.open('wb') as output:
+                take(b'\r\n' + marker, sink=output)
+            inputs.append((source, filename))
+        else:
+            fields[name] = take(b'\r\n' + marker, limit=1024).decode('utf-8').strip()
+        ending = take(b'\r\n')
+        if ending == b'--':
+            return fields, inputs
+        if ending != b'':
+            raise ValueError("Неверная граница файла")
+
+
 def command(source, target, size, fps, mute):
     filters = []
     if SIZES[size]:
@@ -113,38 +173,27 @@ class Handler(BaseHTTPRequestHandler):
         directory = None
         try:
             length = int(self.headers.get("Content-Length", "0"))
-            if not 0 < length <= 512 * 1024 * 1024:
-                return self.json({"error": "Размер пакета должен быть от 1 байта до 512 МБ."}, 413)
+            if length <= 0:
+                raise ValueError("Пустая загрузка")
             content_type = self.headers.get("Content-Type", "")
             if not content_type.startswith("multipart/form-data;") or "\r" in content_type or "\n" in content_type:
                 raise ValueError("Ожидается загрузка файлов multipart/form-data")
-            message = BytesParser(policy=email.policy.default).parsebytes(("Content-Type: " + content_type + "\r\nMIME-Version: 1.0\r\n\r\n").encode() + self.rfile.read(length))
-            fields, files = {}, []
-            for part in message.iter_parts():
-                name = part.get_param("name", header="content-disposition")
-                if part.get_filename():
-                    files.append((Path(part.get_filename().replace("\\", "/")).name, part.get_payload(decode=True)))
-                else:
-                    fields[name] = part.get_content().strip()
+            directory = Path(tempfile.mkdtemp(prefix="video-converter-"))
+            fields, inputs = read_upload(self.rfile, length, content_type, directory)
             settings = {"format": fields.get("format", "mp4"), "size": fields.get("size", "original"), "fps": fields.get("fps", "original"), "mute": fields.get("mute") == "true"}
             if settings["format"] not in FORMATS or settings["size"] not in SIZES or settings["fps"] not in {"original", "24", "25", "30", "50", "60"}:
                 raise ValueError("Неверные настройки конвертации")
-            if not files or len(files) > 100:
-                raise ValueError("Выберите от 1 до 100 видеофайлов")
+            if not inputs:
+                raise ValueError("Выберите видеофайлы")
             with LOCK:
                 if any(j["status"] == "processing" for j in JOBS.values()):
+                    shutil.rmtree(directory, ignore_errors=True)
                     return self.json({"error": "Уже выполняется конвертация. Дождитесь завершения."}, 409)
-                directory = Path(tempfile.mkdtemp(prefix="video-converter-"))
-                inputs = []
-                for index, (name, data) in enumerate(files):
-                    source = directory / f"input_{index}"
-                    source.write_bytes(data)
-                    inputs.append((source, name))
                 job_id = uuid.uuid4().hex
-                JOBS[job_id] = {"status": "processing", "directory": str(directory), "files": [{"name": name, "status": "waiting"} for name, _ in files]}
+                JOBS[job_id] = {"status": "processing", "directory": str(directory), "files": [{"name": name, "status": "waiting"} for _, name in inputs]}
                 threading.Thread(target=convert, args=(job_id, directory, inputs, settings), daemon=True).start()
             self.json({"id": job_id}, 202)
-        except (ValueError, TypeError) as exc:
+        except (ValueError, TypeError, OSError) as exc:
             if directory:
                 shutil.rmtree(directory, ignore_errors=True)
             self.json({"error": str(exc)}, 400)
