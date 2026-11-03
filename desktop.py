@@ -12,7 +12,9 @@ import tkinter as tk
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 
+from appearance import apply_theme, titlebar
 from engine import FFMPEG, convert_batch, probe_encoder
+from preferences import load_theme, save_theme
 
 
 class Converter:
@@ -28,23 +30,24 @@ class Converter:
         root.title("Кадр — конвертер видео")
         root.geometry("1000x780")
         root.minsize(800, 700)
-        root.configure(bg="#f5f6f8")
-        style = ttk.Style()
-        style.theme_use("clam")
-        style.configure("TFrame", background="#f5f6f8")
-        style.configure("TLabel", background="#f5f6f8", font=("Segoe UI", 10))
-        style.configure("TButton", font=("Segoe UI", 10), padding=8)
-        style.configure("Treeview", rowheight=29, font=("Segoe UI", 10))
+        self.theme = load_theme()
+        self.palette = apply_theme(root, self.theme)
+        self.diagnostic_windows = []
         outer = ttk.Frame(root, padding=24)
         outer.pack(fill="both", expand=True)
         outer.columnconfigure(0, weight=1)
         outer.rowconfigure(3, weight=1)
-        ttk.Label(outer, text="Кадр", font=("Segoe UI", 25, "bold")).grid(
-            row=0, column=0, sticky="w"
-        )
-        ttk.Label(outer, text="Пакетная конвертация видео • исходники остаются без изменений").grid(
-            row=1, column=0, sticky="w", pady=(2, 18)
-        )
+        header = ttk.Frame(outer)
+        header.grid(row=0, column=0, sticky="ew")
+        ttk.Label(header, text="Кадр", style="Title.TLabel").pack(side="left")
+        self.theme_button = ttk.Button(header, command=self.toggle_theme)
+        self.theme_button.pack(side="right")
+        self.update_theme_button()
+        ttk.Label(
+            outer,
+            text="ПАКЕТНЫЙ КОНВЕРТЕР ВИДЕО  /  исходники остаются без изменений",
+            style="Muted.TLabel",
+        ).grid(row=1, column=0, sticky="w", pady=(4, 20))
         toolbar = ttk.Frame(outer)
         toolbar.grid(row=2, column=0, sticky="ew")
         self.add = ttk.Button(toolbar, text="＋ Добавить видео", command=self.choose_files)
@@ -109,7 +112,7 @@ class Converter:
         )
         self.gpu_diagnostics_button.pack(side="right")
         self.gpu_status = tk.StringVar(value="Проверка доступных видеокарт…")
-        ttk.Label(outer, textvariable=self.gpu_status).grid(
+        ttk.Label(outer, textvariable=self.gpu_status, style="Muted.TLabel").grid(
             row=6, column=0, sticky="w", pady=(4, 0)
         )
         threading.Thread(target=self.detect_devices, daemon=True).start()
@@ -127,7 +130,9 @@ class Converter:
         self.browse = ttk.Button(folder, text="Выбрать папку", command=self.choose_folder)
         self.browse.pack(side="left")
         ttk.Label(
-            outer, text="Пропорции сохраняются. Ограничений на размер и количество файлов нет."
+            outer,
+            text="Пропорции сохраняются · Без ограничений на количество и размер",
+            style="Muted.TLabel",
         ).grid(row=9, column=0, sticky="w", pady=(12, 8))
         self.progress = ttk.Progressbar(outer, mode="determinate")
         self.progress.grid(row=10, column=0, sticky="ew")
@@ -137,7 +142,9 @@ class Converter:
         )
         bottom = ttk.Frame(outer)
         bottom.grid(row=12, column=0, sticky="ew")
-        self.start_button = ttk.Button(bottom, text="Конвертировать видео", command=self.start)
+        self.start_button = ttk.Button(
+            bottom, text="Конвертировать видео", command=self.start, style="Accent.TButton"
+        )
         self.start_button.pack(side="left")
         self.stop_button = ttk.Button(
             bottom, text="Остановить", command=self.cancel.set, state="disabled"
@@ -147,8 +154,52 @@ class Converter:
             bottom, text="Открыть папку результатов", command=self.open_folder
         )
         self.open_button.pack(side="right")
+        self.apply_appearance()
         root.protocol("WM_DELETE_WINDOW", self.close)
         root.after(100, self.poll)
+
+    def update_theme_button(self):
+        self.theme_button.configure(text="Светлая тема" if self.theme == "dark" else "Тёмная тема")
+
+    def toggle_theme(self):
+        self.theme = "dark" if self.theme == "light" else "light"
+        self.apply_appearance()
+        try:
+            save_theme(self.theme)
+        except OSError:
+            self.status.set("Тема изменена. Не удалось сохранить её для следующего запуска.")
+
+    def apply_appearance(self):
+        self.palette = apply_theme(self.root, self.theme)
+        self.update_theme_button()
+        self.tree.tag_configure("even", background=self.palette["panel"])
+        self.tree.tag_configure("odd", background=self.palette["stripe"])
+        for combo in self.combos:
+            popup = self.root.tk.call("ttk::combobox::PopdownWindow", combo)
+            self.root.tk.call(
+                popup + ".f.l",
+                "configure",
+                "-background",
+                self.palette["field"],
+                "-foreground",
+                self.palette["text"],
+                "-selectbackground",
+                self.palette["selected"],
+                "-selectforeground",
+                self.palette["text"],
+            )
+        for window, text in self.diagnostic_windows:
+            if window.winfo_exists():
+                window.configure(background=self.palette["bg"])
+                text.configure(
+                    background=self.palette["panel"],
+                    foreground=self.palette["text"],
+                    insertbackground=self.palette["text"],
+                    selectbackground=self.palette["selected"],
+                    selectforeground=self.palette["text"],
+                    relief="flat",
+                )
+                titlebar(window, self.theme == "dark")
 
     def detect_devices(self):
         available = {"Процессор (CPU)": ("cpu", 0)}
@@ -198,6 +249,8 @@ class Converter:
         text.pack(fill="both", expand=True, padx=12, pady=12)
         text.insert("1.0", self.gpu_diagnostics)
         text.configure(state="disabled")
+        self.diagnostic_windows.append((window, text))
+        self.apply_appearance()
 
         def copy():
             window.clipboard_clear()
@@ -232,7 +285,13 @@ class Converter:
     def refresh(self):
         self.tree.delete(*self.tree.get_children())
         for i, path in enumerate(self.paths):
-            self.tree.insert("", "end", iid=str(i), values=(str(path), "В очереди"))
+            self.tree.insert(
+                "",
+                "end",
+                iid=str(i),
+                values=(str(path), "В очереди"),
+                tags=("even" if i % 2 == 0 else "odd",),
+            )
         self.status.set(f"В очереди: {len(self.paths)}")
 
     def remove_files(self):
@@ -405,7 +464,10 @@ def smoke(root, ui, report):
             creationflags=subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0,
         )
         # Validate layout at enlarged Windows text scale, including the smallest window.
-        for geometry in ["1000x780", "900x700"]:
+        for theme, geometry in [("light", "1000x780"), ("dark", "1000x780"), ("dark", "900x700")]:
+            ui.theme = theme
+            ui.apply_appearance()
+            assert ttk.Style(root).lookup("TLabel", "foreground") == ui.palette["text"]
             root.geometry(geometry)
             root.update()
             for button in (ui.start_button, ui.stop_button, ui.open_button):
