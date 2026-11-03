@@ -4,3 +4,9 @@ __pycache__/
 build/
 dist/
 *.spec
+.ruff_cache/
+.DS_Store
+Thumbs.db
+package/
+Kadr-Windows-x64.zip
+SHA256SUMS.txt

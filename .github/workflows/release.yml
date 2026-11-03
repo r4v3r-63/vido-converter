@@ -3,6 +3,7 @@ name: Windows application
 on:
   push:
     tags: ['v*']
+    branches: [main]
   workflow_dispatch:
 
 permissions:
@@ -11,15 +12,16 @@ permissions:
 jobs:
   windows:
     runs-on: windows-latest
+    timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: '3.12'
       - name: Install build tools
         shell: pwsh
         run: |
-          python -m pip install pyinstaller==6.16.0
+          python -m pip install -r requirements-build.txt
           choco install ffmpeg --version=7.1.1 -y --no-progress 2>&1 | Tee-Object -Variable installLog
           if ($LASTEXITCODE -ne 0) {
             $detail = ($installLog | Select-Object -Last 30) -join '%0A'
@@ -56,7 +58,7 @@ jobs:
           if ($i -eq 0) { throw 'FFmpeg license files missing' }
           Compress-Archive -Path package/* -DestinationPath Kadr-Windows-x64.zip
           (Get-FileHash Kadr-Windows-x64.zip -Algorithm SHA256).Hash + '  Kadr-Windows-x64.zip' | Set-Content SHA256SUMS.txt
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v5
         with:
           name: Kadr-Windows-x64
           path: |
