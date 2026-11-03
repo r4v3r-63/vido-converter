@@ -8,6 +8,8 @@ import subprocess
 import tempfile
 import threading
 import uuid
+import sys
+import webbrowser
 import zipfile
 from email.parser import BytesParser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -15,6 +17,8 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 ROOT = Path(__file__).parent
+BUNDLED = getattr(sys, 'frozen', False)
+FFMPEG = str(ROOT / 'ffmpeg.exe') if BUNDLED else 'ffmpeg'
 JOBS = {}
 LOCK = threading.Lock()
 SIZES = {"original": None, "2160": (3840, 2160), "1080": (1920, 1080), "720": (1280, 720), "480": (854, 480)}
@@ -30,7 +34,7 @@ def command(source, target, size, fps, mute):
         filters.append("scale=trunc(iw/2)*2:trunc(ih/2)*2")
     if fps != "original":
         filters.append(f"fps={fps}")
-    args = ["ffmpeg", "-nostdin", "-y", "-v", "error", "-i", str(source), "-map", "0:v:0", "-map", "0:a:0?", "-vf", ",".join(filters), *FORMATS[target.suffix[1:]], "-pix_fmt", "yuv420p", "-threads", "2"]
+    args = [FFMPEG, "-nostdin", "-y", "-v", "error", "-i", str(source), "-map", "0:v:0", "-map", "0:a:0?", "-vf", ",".join(filters), *FORMATS[target.suffix[1:]], "-pix_fmt", "yuv420p", "-threads", "2"]
     if mute:
         args.append("-an")
     return args + [str(target)]
@@ -43,7 +47,7 @@ def convert(job_id, directory, inputs, settings):
         item["status"] = "processing"
         target = directory / f"{index + 1:03d}_{Path(name).stem}.{settings['format']}"
         try:
-            result = subprocess.run(command(source, target, settings["size"], settings["fps"], settings["mute"]), capture_output=True, text=True)
+            result = subprocess.run(command(source, target, settings["size"], settings["fps"], settings["mute"]), capture_output=True, text=True, **({'creationflags': subprocess.CREATE_NO_WINDOW} if sys.platform == 'win32' else {}))
             if result.returncode:
                 raise ValueError(result.stderr[-1500:] or "FFmpeg не смог обработать файл")
             item.update(status="done", url=f"/download/{job_id}/{target.name}")
@@ -148,12 +152,16 @@ class Handler(BaseHTTPRequestHandler):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--port", type=int, default=8000)
+    parser.add_argument("--port", type=int, default=0 if BUNDLED else 8000)
+    parser.add_argument("--no-browser", action="store_true")
     args = parser.parse_args()
-    if not shutil.which("ffmpeg"):
+    if not shutil.which(FFMPEG):
         parser.error("Установите FFmpeg и добавьте его в PATH")
     server = ThreadingHTTPServer(("127.0.0.1", args.port), Handler)
-    print(f"Конвертер запущен: http://127.0.0.1:{args.port}", flush=True)
+    address = f"http://127.0.0.1:{server.server_port}"
+    print(f"Kadr: {address}", flush=True)
+    if BUNDLED and not args.no_browser:
+        threading.Timer(0.5, lambda: webbrowser.open(address)).start()
     try:
         server.serve_forever()
     except KeyboardInterrupt:
