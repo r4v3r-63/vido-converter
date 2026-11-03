@@ -31,7 +31,7 @@ jobs:
         shell: pwsh
         run: |
           $ffmpeg = (Get-ChildItem C:\ProgramData\chocolatey\lib\ffmpeg -Filter ffmpeg.exe -Recurse | Select-Object -First 1).FullName
-          python -m PyInstaller --noconfirm --clean --onefile --name Kadr --add-data "index.html;." --add-binary "$ffmpeg;." app.py
+          python -m PyInstaller --noconfirm --clean --onefile --windowed --name Kadr --add-binary "$ffmpeg;." desktop.py
           if ($LASTEXITCODE -ne 0) { throw 'Packaging failed' }
       - name: Smoke test packaged application
         shell: pwsh
@@ -63,4 +63,4 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         shell: pwsh
-        run: gh release create "$env:GITHUB_REF_NAME" Kadr-Windows-x64.zip SHA256SUMS.txt --title "Кадр $env:GITHUB_REF_NAME" --notes "Windows x64. Скачайте Kadr-Windows-x64.zip, распакуйте и запустите Kadr.exe. Python и FFmpeg включены; отдельная установка не нужна. Интерфейс открывается в браузере."
+        run: gh release create "$env:GITHUB_REF_NAME" Kadr-Windows-x64.zip SHA256SUMS.txt --title "Кадр $env:GITHUB_REF_NAME" --notes "Windows x64. Скачайте Kadr-Windows-x64.zip, распакуйте и запустите Kadr.exe. Python и FFmpeg включены; отдельная установка не нужна. Отдельное окно программы, без браузера."

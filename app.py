@@ -85,7 +85,7 @@ def read_upload(stream, length, content_type, directory):
             raise ValueError("Неверная граница файла")
 
 
-def command(source, target, size, fps, mute):
+def command(source, target, size, fps, mute, encoder="cpu", device=0):
     filters = []
     if SIZES[size]:
         w, h = SIZES[size]
@@ -95,6 +95,19 @@ def command(source, target, size, fps, mute):
     if fps != "original":
         filters.append(f"fps={fps}")
     args = [FFMPEG, "-nostdin", "-y", "-v", "error", "-i", str(source), "-map", "0:v:0", "-map", "0:a:0?", "-vf", ",".join(filters), *FORMATS[target.suffix[1:]], "-pix_fmt", "yuv420p", "-threads", "2"]
+    if encoder != 'cpu':
+        if target.suffix == '.webm':
+            raise ValueError('Для аппаратного кодирования выберите MP4 или MKV. WebM доступен на процессоре.')
+        options = {
+            'nvidia': ['-c:v', 'h264_nvenc', '-gpu', str(device), '-preset', 'p4', '-cq', '23', '-b:v', '0'],
+            'amd': ['-c:v', 'h264_amf', '-quality', 'balanced', '-qp_i', '23', '-qp_p', '23'],
+            'intel': ['-c:v', 'h264_qsv', '-global_quality', '23'],
+        }
+        if encoder not in options:
+            raise ValueError('Неизвестный аппаратный кодировщик')
+        start = args.index('-c:v')
+        end = args.index('-c:a', start)
+        args[start:end] = options[encoder]
     if mute:
         args.append("-an")
     return args + [str(target)]
